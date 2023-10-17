@@ -6,14 +6,41 @@ using Task = System.Threading.Tasks.Task;
 using Community.VisualStudio.Toolkit.DependencyInjection.Core;
 using System.Linq;
 using System.ComponentModel.Design;
+using System.Collections.Generic;
+using System.IO.Packaging;
 
 namespace Community.VisualStudio.Toolkit.DependencyInjection
 {
+    public interface IToolkitServiceProviderContainer
+    {
+        IServiceProvider Get<TPackage>() where TPackage : AsyncPackage;
+        IServiceProvider Get(Type packageType);
+    }
+
+    public class ToolkitServiceProviderContainer : IToolkitServiceProviderContainer
+    {
+        private static Dictionary<Type, IServiceProvider> _serviceProviders = new Dictionary<Type, IServiceProvider>();
+        internal static void AddServiceProvider<TPackage>(IServiceProvider serviceProvider) where TPackage : AsyncPackage
+        {
+            _serviceProviders.Add(typeof(TPackage), serviceProvider);
+        }
+
+        public IServiceProvider Get<TPackage>() where TPackage : AsyncPackage
+        {
+            return this.Get(typeof(TPackage));
+        }
+
+        public IServiceProvider Get(Type packageType)
+        {
+            return _serviceProviders[packageType];
+        }
+    }
+
     /// <summary>
     /// Package that contains a DI service container.
     /// </summary>
     /// <typeparam name="TPackage"></typeparam>
-    [ProvideService(typeof(SToolkitServiceProvider<>), IsAsyncQueryable = true)]
+    [ProvideService(typeof(SToolkitServiceProviderContainer), IsAsyncQueryable = true)]
     public abstract class DIToolkitPackage<TPackage> : DIToolkitPackage
         where TPackage : AsyncPackage
     {
@@ -38,15 +65,21 @@ namespace Community.VisualStudio.Toolkit.DependencyInjection
             InitializeServices(services);
 
             IServiceProvider serviceProvider = BuildServiceProvider(services);
-            this.ServiceProvider = new ToolkitServiceProvider<TPackage>(serviceProvider);
+            this.ServiceProvider = serviceProvider;
+            ToolkitServiceProviderContainer.AddServiceProvider<TPackage>(this.ServiceProvider);
 
             // Add the IToolkitServiceProvider to the VS IServiceProvider
             AsyncServiceCreatorCallback serviceCreatorCallback = (sc, ct, t) =>
             {
-                return Task.FromResult((object)this.ServiceProvider);
+                if(t == typeof(SToolkitServiceProviderContainer))
+                {
+                    return Task.FromResult((object)new ToolkitServiceProviderContainer());
+                }
+                return Task.FromResult<object?>(null);
+                
             };
 
-            AddService(typeof(SToolkitServiceProvider<TPackage>), serviceCreatorCallback, true);
+            AddService(typeof(SToolkitServiceProviderContainer), serviceCreatorCallback, true);
 
             // Register any commands that were added to the DI container
             // Create a CommandWrapper for each command that was added to the container
@@ -63,6 +96,8 @@ namespace Community.VisualStudio.Toolkit.DependencyInjection
                 // Retrieveing the command wrapper from the container will register the command with the 'IMenuCommandService'
                 _ = serviceProvider.GetRequiredService(baseCommandTypeGeneric);
             }
+
+            
         }
     }
 
